@@ -183,6 +183,7 @@ function frame(now: number): void {
     view.yaw += (elapsed / 1000) * 0.06; // giro lento desde el centro del nivel (solo menú principal)
     view.pitch = -0.3;
   }
+  renderer.update(elapsed / 1000);
   renderer.sync(world, view, overview);
   if (playing) {
     hover = renderer.pick(input.pointer.x, input.pointer.y);

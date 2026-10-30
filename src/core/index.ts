@@ -8,6 +8,7 @@ export { apply, checkAbsorb, checkCreate, checkTransfer } from './sim';
 export { canSee, surfaceY } from './visibility';
 export { SIZE, TILES, tileId, tileX, tileZ, vh, isFlat, baseHeight } from './grid';
 export { generateLandscape } from './terrain';
+export { next as rngNext, seedFromCode } from './rng';
 export { createWorld } from './level';
 export {
   createWorldFromLandscape,

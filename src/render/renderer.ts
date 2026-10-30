@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { SIZE, TILES, baseHeight, config, eyePos, footY, playerEntity, tileId, tileX, tileZ, vh } from '../core';
 import type { Entity, TileId, World } from '../core';
+import { Clouds } from './clouds';
 
 export interface Pick {
   entityId?: number;
@@ -100,6 +101,7 @@ export class Renderer {
   private readonly gl: THREE.WebGLRenderer;
   private wallMaterial: THREE.ShaderMaterial | null = null;
   private overviewY = 10;
+  private readonly clouds = new Clouds();
   private readonly assets = new Map<string, { geo: THREE.BufferGeometry; mat: THREE.Material }>();
   private shadowsDirty = true;
   private lastOverview = false;
@@ -126,6 +128,7 @@ export class Renderer {
     this.gl.toneMapping = THREE.ACESFilmicToneMapping;
 
     this.scene.add(this.world3d);
+    this.scene.add(this.clouds.mesh);
     this.scene.add(new THREE.HemisphereLight(0xdfeaff, 0x3a4a3a, 1.1));
     this.sun = new THREE.DirectionalLight(0xfff1d6, 2.4);
     this.sun.castShadow = true;
@@ -192,6 +195,7 @@ export class Renderer {
     let maxH = 0;
     for (const h of l.heights) if (h > maxH) maxH = h;
     this.overviewY = maxH + config.pedestalHeight + 3.5;
+    this.clouds.reset(l.code, maxH + config.pedestalHeight, sky);
     const ped = new THREE.Mesh(
       new THREE.BoxGeometry(0.94, 1, 0.94),
       new THREE.MeshStandardMaterial({ color: COLORS.pedestal, flatShading: true }),
@@ -320,6 +324,11 @@ export class Renderer {
       }
     }
     return g;
+  }
+
+  /** Animación independiente de la simulación (nubes); también corre bajo los menús. */
+  update(dt: number): void {
+    this.clouds.update(dt);
   }
 
   /** `overview`: cámara girando en el centro del nivel (fondo del menú) en vez de la vista del jugador. */
