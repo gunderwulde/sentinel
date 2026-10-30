@@ -24,6 +24,15 @@ const COLORS = {
 
 /** Anillo de terreno decorativo que continúa fuera del área jugable (en baldosas). */
 const OUTER = 24;
+/** Dirección hacia el sol: 26° sobre el horizonte, desde el sureste. Luz, sombras y disco del cielo usan la misma. */
+const SUN_ELEVATION = (26 * Math.PI) / 180;
+const SUN_AZIMUTH = Math.atan2(14, 22);
+const SUN_DIR = new THREE.Vector3(
+  Math.cos(SUN_ELEVATION) * Math.cos(SUN_AZIMUTH),
+  Math.sin(SUN_ELEVATION),
+  Math.cos(SUN_ELEVATION) * Math.sin(SUN_AZIMUTH),
+);
+const SUN_DISTANCE = 150; // el disco se coloca a esta distancia de la cámara (siempre «en el infinito»)
 const WALL_BOTTOM = -4;
 const WALL_TOP = 16;
 
@@ -102,6 +111,7 @@ export class Renderer {
   private wallMaterial: THREE.ShaderMaterial | null = null;
   private overviewY = 10;
   private readonly clouds = new Clouds();
+  private readonly sunVisual = new THREE.Group();
   private readonly assets = new Map<string, { geo: THREE.BufferGeometry; mat: THREE.Material }>();
   private shadowsDirty = true;
   private lastOverview = false;
@@ -129,6 +139,7 @@ export class Renderer {
 
     this.scene.add(this.world3d);
     this.scene.add(this.clouds.group);
+    this.buildSunVisual();
     this.scene.add(new THREE.HemisphereLight(0xdfeaff, 0x3a4a3a, 1.1));
     this.sun = new THREE.DirectionalLight(0xfff1d6, 2.4);
     this.sun.castShadow = true;
@@ -194,7 +205,7 @@ export class Renderer {
     const l = w.landscape;
     let maxH = 0;
     for (const h of l.heights) if (h > maxH) maxH = h;
-    this.overviewY = maxH + config.pedestalHeight + 3.5;
+    this.overviewY = maxH + config.pedestalHeight + 3.5; // por debajo de la capa de nubes (empieza ≈ +7): sin cruzarlas, con todo el panorama
     this.clouds.reset(l.code, maxH + config.pedestalHeight, sky);
     const ped = new THREE.Mesh(
       new THREE.BoxGeometry(0.94, 1, 0.94),
@@ -208,7 +219,7 @@ export class Renderer {
     this.world3d.add(this.terrain);
 
     const c = SIZE / 2;
-    this.sun.position.set(c + 22, 38, c + 14);
+    this.sun.position.copy(SUN_DIR).multiplyScalar(70).add(new THREE.Vector3(c, 0, c));
     this.sun.target.position.set(c, 0, c);
   }
 
@@ -331,6 +342,20 @@ export class Renderer {
     this.clouds.update(dt);
   }
 
+  /** Disco solar low-poly con dos halos translúcidos; no le afectan niebla ni tone mapping. */
+  private buildSunVisual(): void {
+    const mk = (radius: number, color: number, opacity: number): THREE.Mesh => {
+      const m = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(radius, 1),
+        new THREE.MeshBasicMaterial({ color, transparent: opacity < 1, opacity, fog: false, toneMapped: false, depthWrite: false }),
+      );
+      m.renderOrder = -1; // detrás de todo lo demás
+      return m;
+    };
+    this.sunVisual.add(mk(9, 0xfff6c8, 1), mk(14, 0xffe28a, 0.28), mk(22, 0xffc766, 0.12));
+    this.scene.add(this.sunVisual);
+  }
+
   /** `overview`: cámara girando en el centro del nivel (fondo del menú) en vez de la vista del jugador. */
   sync(w: World, view: ViewState, overview = false): void {
     const seen = new Set<number>();
@@ -376,6 +401,7 @@ export class Renderer {
         p.z + Math.cos(view.yaw) * cp,
       );
     }
+    this.sunVisual.position.copy(this.camera.position).addScaledVector(SUN_DIR, SUN_DISTANCE);
     if (this.wallMaterial) {
       this.wallMaterial.uniforms.uTime!.value = performance.now() / 1000;
       (this.wallMaterial.uniforms.uCam!.value as THREE.Vector3).copy(this.camera.position);

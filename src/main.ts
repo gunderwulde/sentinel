@@ -40,7 +40,7 @@ function load(newCode: number): void {
   const s = world.entities.get(world.sentinelId!)!;
   view.yaw = Math.atan2(tileX(s.tile) - tileX(me.tile), tileZ(s.tile) - tileZ(me.tile));
   view.pitch = -0.15;
-  (window as unknown as { __game: unknown }).__game = { get world() { return world; } };
+  (window as unknown as { __game: unknown }).__game = { get world() { return world; }, view };
 }
 
 function run(cmd: Command): void {
@@ -181,7 +181,7 @@ function frame(now: number): void {
   const overview = !playing && menu.overview;
   if (overview) {
     view.yaw += (elapsed / 1000) * 0.06; // giro lento desde el centro del nivel (solo menú principal)
-    view.pitch = -0.3;
+    view.pitch = -0.1; // algo más horizontal: se ven las nubes y el sol al girar
   }
   renderer.update(elapsed / 1000);
   renderer.sync(world, view, overview);

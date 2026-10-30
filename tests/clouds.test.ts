@@ -3,127 +3,209 @@ import * as THREE from 'three';
 import { Clouds } from '../src/render/clouds';
 
 const SKY = new THREE.Color().setHSL(0.6, 0.45, 0.72);
+const CY = 16; // dentro del campo para reset(_, 9, _): baseY = 16
 
-function run(code: number, seconds: number, step = 0.1): { clouds: Clouds; coverage: number[] } {
-  const clouds = new Clouds();
-  clouds.reset(code, 9, SKY);
-  const coverage: number[] = [];
-  for (let t = 0; t < seconds; t += step) {
-    clouds.update(step);
-    coverage.push(clouds.coverage);
-  }
-  return { clouds, coverage };
+function make(code = 7): Clouds {
+  const c = new Clouds();
+  c.reset(code, 9, SKY);
+  return c;
 }
 
-describe('nubes procedurales', () => {
-  it('se acumulan y se disipan con el tiempo (la cobertura sube y baja, nunca es NaN)', () => {
-    const { coverage } = run(7, 300);
-    expect(coverage.every((c) => Number.isFinite(c) && c >= 0)).toBe(true);
-    const min = Math.min(...coverage);
-    const max = Math.max(...coverage);
-    expect(max).toBeGreaterThan(0);
-    expect(max).toBeGreaterThan(min * 1.05); // hay variación apreciable, no es una cifra fija
+function positions(c: Clouds): Float32Array {
+  return (c.mesh.geometry.getAttribute('position').array as Float32Array).subarray(0, c.triangleCount * 9);
+}
+
+/** Volumen firmado de la malla (positivo si las caras miran hacia fuera). */
+function volume(c: Clouds): number {
+  const p = positions(c);
+  let v = 0;
+  for (let i = 0; i < p.length; i += 9) {
+    const [ax, ay, az, bx, by, bz, cx, cy, cz] = [p[i]!, p[i + 1]!, p[i + 2]!, p[i + 3]!, p[i + 4]!, p[i + 5]!, p[i + 6]!, p[i + 7]!, p[i + 8]!];
+    v += (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)) / 6;
+  }
+  return v;
+}
+
+/** Nº de estructuras separadas: soldamos vértices coincidentes y unimos los de cada triángulo. */
+function components(c: Clouds): number {
+  const p = positions(c);
+  const ids = new Map<string, number>();
+  const parent: number[] = [];
+  const find = (a: number): number => {
+    while (parent[a] !== a) {
+      parent[a] = parent[parent[a]!]!;
+      a = parent[a]!;
+    }
+    return a;
+  };
+  const id = (i: number): number => {
+    const key = `${Math.round(p[i]! * 1e3)},${Math.round(p[i + 1]! * 1e3)},${Math.round(p[i + 2]! * 1e3)}`;
+    let v = ids.get(key);
+    if (v === undefined) {
+      v = parent.length;
+      ids.set(key, v);
+      parent.push(v);
+    }
+    return v;
+  };
+  for (let i = 0; i < p.length; i += 9) {
+    const a = id(i);
+    const b = id(i + 3);
+    const d = id(i + 6);
+    parent[find(a)] = find(b);
+    parent[find(b)] = find(d);
+  }
+  return new Set(parent.map((_, k) => find(k))).size;
+}
+
+describe('nubes de humedad + marching cubes', () => {
+  it('las caras miran hacia fuera', () => {
+    const c = make();
+    c.debugSet([{ x: 15.5, y: CY, z: 15.5, r: 9, h: 1 }]);
+    const p = positions(c);
+    let outward = 0;
+    let total = 0;
+    for (let i = 0; i < p.length; i += 9) {
+      const e1 = [p[i + 3]! - p[i]!, p[i + 4]! - p[i + 1]!, p[i + 5]! - p[i + 2]!];
+      const e2 = [p[i + 6]! - p[i]!, p[i + 7]! - p[i + 1]!, p[i + 8]! - p[i + 2]!];
+      const n = [e1[1]! * e2[2]! - e1[2]! * e2[1]!, e1[2]! * e2[0]! - e1[0]! * e2[2]!, e1[0]! * e2[1]! - e1[1]! * e2[0]!];
+      if (Math.hypot(n[0]!, n[1]!, n[2]!) < 1e-9) continue;
+      const cx = (p[i]! + p[i + 3]! + p[i + 6]!) / 3 - 15.5;
+      const cy = (p[i + 1]! + p[i + 4]! + p[i + 7]!) / 3 - CY;
+      const cz = (p[i + 2]! + p[i + 5]! + p[i + 8]!) / 3 - 15.5;
+      total++;
+      if (n[0]! * cx + n[1]! * cy + n[2]! * cz > 0) outward++;
+    }
+    expect(total).toBeGreaterThan(100);
+    expect(outward / total).toBeGreaterThan(0.97);
+    expect(volume(c)).toBeGreaterThan(0);
   });
 
-  it('derivan con el viento en una dirección coherente', () => {
-    const c = new Clouds();
-    c.reset(3, 9, SKY);
-    const before = c.clouds.map((x) => ({ x: x.x, z: x.z, age: x.age }));
-    c.update(5); // 5 s: ninguna nube llega al final de su vida (≥45 s) salvo que ya estuviera casi muerta
-    const moved = c.clouds
-      .map((x, i) => ({ dx: x.x - before[i]!.x, dz: x.z - before[i]!.z, same: x.age > before[i]!.age }))
-      .filter((m) => m.same);
-    expect(moved.length).toBeGreaterThan(6);
-    // Todas se desplazan en el mismo sentido (el viento es global) y poco: es un movimiento leve.
-    const dirs = moved.map((m) => Math.atan2(m.dz, m.dx));
-    for (const d of dirs) expect(Math.abs(Math.atan2(Math.sin(d - dirs[0]!), Math.cos(d - dirs[0]!)))).toBeLessThan(1e-6);
-    for (const m of moved) expect(Math.hypot(m.dx, m.dz)).toBeLessThan(10);
+  it('más humedad = estructura más grande; por debajo del umbral no hay nube', () => {
+    const c = make();
+    const at = (h: number): number => {
+      c.debugSet([{ x: 15.5, y: CY, z: 15.5, r: 9, h }]);
+      return volume(c);
+    };
+    const v1 = at(1.2);
+    const v2 = at(0.8);
+    const v3 = at(0.5);
+    expect(v1).toBeGreaterThan(v2);
+    expect(v2).toBeGreaterThan(v3);
+    expect(v3).toBeGreaterThan(0);
+    c.debugSet([{ x: 15.5, y: CY, z: 15.5, r: 9, h: 0.3 }]);
+    expect(c.triangleCount).toBe(0); // sin humedad suficiente no se dibuja nada (y tampoco se «recortan» caras)
+  });
+
+  it('dos acumulaciones cercanas se funden en una sola estructura; lejos, quedan separadas', () => {
+    const c = make();
+    const two = (dist: number): number => {
+      c.debugSet([
+        { x: 15.5 - dist / 2, y: CY, z: 15.5, r: 9, h: 0.7 },
+        { x: 15.5 + dist / 2, y: CY, z: 15.5, r: 9, h: 0.7 },
+      ]);
+      return components(c);
+    };
+    expect(two(14)).toBe(2);
+    expect(two(8)).toBe(1);
+  });
+
+  it('subir la humedad de un punto cercano acerca y acaba uniendo las estructuras', () => {
+    const c = make();
+    const comps = (h: number): number => {
+      c.debugSet([
+        { x: 10, y: CY, z: 15.5, r: 9, h: 0.7 },
+        { x: 21, y: CY, z: 15.5, r: 9, h },
+      ]);
+      return components(c);
+    };
+    expect(comps(0.45)).toBe(2);
+    expect(comps(1.3)).toBe(1);
+  });
+
+  it('la humedad sube y baja con el tiempo y nunca es NaN', () => {
+    const c = make();
+    const series: number[] = [];
+    for (let t = 0; t < 300; t += 0.1) {
+      c.update(0.1);
+      series.push(c.humidity);
+    }
+    expect(series.every((h) => Number.isFinite(h) && h >= 0)).toBe(true);
+    expect(Math.max(...series)).toBeGreaterThan(Math.min(...series) * 1.1);
+  });
+
+  it('las nubes crecen y se encogen de forma continua, sin saltos ni caras que aparecen o desaparecen', () => {
+    const c = make(3);
+    const vols: number[] = [];
+    for (let t = 0; t < 150; t += 0.1) {
+      c.update(0.1);
+      vols.push(volume(c));
+    }
+    const max = Math.max(...vols);
+    expect(max).toBeGreaterThan(0);
+    let maxStep = 0;
+    for (let i = 1; i < vols.length; i++) maxStep = Math.max(maxStep, Math.abs(vols[i]! - vols[i - 1]!));
+    expect(maxStep / max).toBeLessThan(0.08); // ningún paso cambia más del 8 % del volumen máximo
+    expect(Math.min(...vols.slice(50))).toBeLessThan(max * 0.9); // y sí hay variación real
   });
 
   it('es determinista por semilla y distinto entre paisajes', () => {
-    const a = run(11, 40).coverage;
-    const b = run(11, 40).coverage;
-    const c = run(12, 40).coverage;
-    expect(a).toEqual(b);
-    expect(a).not.toEqual(c);
+    const run = (code: number): number[] => {
+      const c = make(code);
+      const out: number[] = [];
+      for (let t = 0; t < 30; t += 0.1) {
+        c.update(0.1);
+        out.push(c.humidity);
+      }
+      return out;
+    };
+    expect(run(11)).toEqual(run(11));
+    expect(run(11)).not.toEqual(run(12));
   });
 
-  it('siempre queda por encima del terreno', () => {
-    const { clouds } = run(5, 120);
-    for (const c of clouds.clouds) expect(c.y).toBeGreaterThanOrEqual(9 + 7 - 0.5);
-  });
-});
-
-describe('nubes con marching cubes', () => {
-  function triangles(geo: THREE.BufferGeometry): Float32Array {
-    return geo.getAttribute('position').array as Float32Array;
-  }
-
-  it('cada nube es una malla no vacía y condensa de dentro hacia fuera', () => {
-    const c = new Clouds();
-    c.reset(21, 9, SKY);
-    for (const cloud of c.clouds) {
-      const geo = cloud.mesh.geometry;
-      expect(geo.getAttribute('position').count).toBeGreaterThan(90); // decenas de triángulos
-      const thr = geo.getAttribute('aThreshold').array as Float32Array;
-      expect(Math.min(...thr)).toBeGreaterThanOrEqual(0);
-      expect(Math.max(...thr)).toBeLessThanOrEqual(1);
+  it('las nubes derivan con el viento y quedan por encima del terreno', () => {
+    const c = make(5);
+    const before = c.clusters.map((k) => ({ x: k.x, z: k.z, age: k.age }));
+    c.update(5);
+    const moved = c.clusters
+      .map((k, i) => ({ dx: k.x - before[i]!.x, dz: k.z - before[i]!.z, same: k.age > before[i]!.age }))
+      .filter((m) => m.same);
+    expect(moved.length).toBeGreaterThan(6);
+    const d0 = Math.atan2(moved[0]!.dz, moved[0]!.dx);
+    for (const m of moved) {
+      expect(Math.abs(Math.atan2(Math.sin(Math.atan2(m.dz, m.dx) - d0), Math.cos(Math.atan2(m.dz, m.dx) - d0)))).toBeLessThan(1e-6);
+      expect(Math.hypot(m.dx, m.dz)).toBeLessThan(10); // movimiento leve
     }
+    for (const k of c.clusters) expect(k.y).toBeGreaterThanOrEqual(9 + 11 - 0.5);
   });
 
-  it('los triángulos miran hacia fuera (el flat shading y el culling dependen de ello)', () => {
-    const c = new Clouds();
-    c.reset(8, 9, SKY);
-    let outward = 0;
-    let total = 0;
-    for (const cloud of c.clouds) {
-      const p = triangles(cloud.mesh.geometry);
-      for (let i = 0; i < p.length; i += 9) {
-        const e1 = [p[i + 3]! - p[i]!, p[i + 4]! - p[i + 1]!, p[i + 5]! - p[i + 2]!];
-        const e2 = [p[i + 6]! - p[i]!, p[i + 7]! - p[i + 1]!, p[i + 8]! - p[i + 2]!];
-        const n = [e1[1]! * e2[2]! - e1[2]! * e2[1]!, e1[2]! * e2[0]! - e1[0]! * e2[2]!, e1[0]! * e2[1]! - e1[1]! * e2[0]!];
-        const area = Math.hypot(n[0]!, n[1]!, n[2]!);
-        if (area < 1e-6) continue; // triángulos colapsados contra la base plana
-        const cx = (p[i]! + p[i + 3]! + p[i + 6]!) / 3;
-        const cy = (p[i + 1]! + p[i + 4]! + p[i + 7]!) / 3;
-        const cz = (p[i + 2]! + p[i + 5]! + p[i + 8]!) / 3;
-        total++;
-        if (n[0]! * cx + n[1]! * cy + n[2]! * cz > 0) outward++;
+  it('reconstruir el campo y la malla es barato', () => {
+    const c = make(2);
+    let sum = 0;
+    let steps = 0;
+    for (let t = 0; t < 60; t += 0.1) {
+      c.update(0.1);
+      sum += c.lastBuildMs;
+      steps++;
+    }
+    expect(sum / steps).toBeLessThan(25); // a 10 Hz: holgura enorme frente a un frame de 16 ms
+  });
+
+  it("la humedad cambia despacio: ningún punto sube o baja más de 0,12 por segundo", () => {
+    const c = make(9);
+    const prev = new Map<object, number>();
+    let worst = 0;
+    for (let t = 0; t < 400; t += 0.1) {
+      c.update(0.1);
+      for (const k of c.clusters) {
+        for (const p of k.points) {
+          const before = prev.get(p);
+          // Un punto recién creado (h pasa de un clúster viejo a uno nuevo) no cuenta como salto.
+          if (before !== undefined && k.age > 0.2) worst = Math.max(worst, Math.abs(p.h - before) / 0.1);
+          prev.set(p, p.h);
+        }
       }
     }
-    expect(total).toBeGreaterThan(500);
-    expect(outward / total).toBeGreaterThan(0.97);
-  });
-
-  it('la base es plana y las nubes siguen siendo baratas de generar', () => {
-    const t0 = performance.now();
-    const c = new Clouds();
-    c.reset(2, 9, SKY);
-    const ms = performance.now() - t0;
-    expect(ms).toBeLessThan(1500); // 12 nubes; en la práctica unas decenas de ms
-    for (const cloud of c.clouds) {
-      const p = triangles(cloud.mesh.geometry);
-      let minY = Infinity;
-      for (let i = 1; i < p.length; i += 3) minY = Math.min(minY, p[i]!);
-      expect(minY).toBeGreaterThanOrEqual(-0.12 * cloud.size * 0.8 - 1e-4);
-    }
-  });
-
-  it('condensarse y disiparse afecta a la nube entera: el crecimiento llega a 0 y a 1', () => {
-    const c = new Clouds();
-    c.reset(4, 9, SKY);
-    const seen = c.clouds.map(() => ({ min: 1, max: 0 }));
-    for (let t = 0; t < 200; t += 0.5) {
-      c.update(0.5);
-      c.clouds.forEach((cl, i) => {
-        seen[i]!.min = Math.min(seen[i]!.min, cl.growth);
-        seen[i]!.max = Math.max(seen[i]!.max, cl.growth);
-      });
-    }
-    // En 200 s (vida máx. 90 s) toda nube pasa por casi vacía y por casi completa.
-    for (const s of seen) {
-      expect(s.min).toBeLessThan(0.05);
-      expect(s.max).toBeGreaterThan(0.95);
-    }
+    expect(worst).toBeLessThan(0.12);
   });
 });
