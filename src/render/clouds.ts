@@ -1,22 +1,21 @@
 import * as THREE from 'three';
+import { MarchingCubes } from 'three/examples/jsm/objects/MarchingCubes.js';
 import { rngNext, seedFromCode } from '../core';
 
-/** Nubes procedurales: solo decoración (no afectan a la simulación ni al picking). */
+/**
+ * Nubes procedurales: solo decoración (no afectan a la simulación ni al picking).
+ * Cada nube es una malla de marching cubes sobre un campo de metaballs, con flat shading y base plana
+ * para encajar con el aspecto del juego. La nube entera se condensa desde el núcleo hacia fuera, se
+ * mantiene y se disipa desde los bordes; mientras tanto deriva con el viento.
+ */
 const CLOUDS = 14;
-const MAX_PUFFS = 10;
+const RES = 24; // resolución del campo: baja a propósito, las facetas son parte del estilo
+const ISO = 80;
+const SUB = 12;
 const CENTER = 15.5;
 const HALF = 48; // las nubes viven en un cuadrado de 96 u alrededor del centro del nivel
 const WIND_SPEED = 0.7; // unidades/s: «un leve movimiento por el aire»
-
-interface Puff {
-  ox: number;
-  oy: number;
-  oz: number;
-  r: number; // 0 = bocanada sin usar
-  delay: number; // 0..0.5: cuándo aparece mientras la nube crece (y cuándo se va al disiparse)
-  phase: number;
-  rot: number;
-}
+const BASE = -0.12; // plano de la base plana, en coordenadas del cubo de marching cubes (-1..1)
 
 interface Cloud {
   x: number;
@@ -26,7 +25,10 @@ interface Cloud {
   age: number;
   life: number;
   phase: number;
-  puffs: Puff[];
+  size: number; // semianchura en unidades de mundo
+  growth: number; // 0 = no existe, 1 = nube completa
+  mesh: THREE.Mesh;
+  uniform: { value: number };
 }
 
 const smooth = (a: number, b: number, x: number): number => {
@@ -35,35 +37,51 @@ const smooth = (a: number, b: number, x: number): number => {
 };
 
 export class Clouds {
-  readonly mesh: THREE.InstancedMesh;
+  readonly group = new THREE.Group();
   readonly clouds: Cloud[] = [];
-  /** Suma de radios visibles: sube cuando las nubes se acumulan y baja cuando se disipan. */
+  /** Suma del tamaño de las nubes visibles: sube al condensarse y baja al disiparse. */
   coverage = 0;
 
   private readonly rng = { s: 1 };
-  private readonly material: THREE.MeshStandardMaterial;
-  private readonly dummy = new THREE.Object3D();
+  private readonly gen: MarchingCubes;
   private readonly top = new THREE.Color(0xffffff);
   private readonly under = new THREE.Color(0xd8dde8);
+  private readonly emissive = new THREE.Color(0xffffff);
   private baseY = 14;
   private windX = 1;
   private windZ = 0;
   private time = 0;
 
   constructor() {
-    this.material = new THREE.MeshStandardMaterial({
-      color: 0xffffff,
-      flatShading: true,
-      roughness: 1,
-      emissiveIntensity: 0.5,
-    });
-    this.mesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), this.material, CLOUDS * MAX_PUFFS);
-    this.mesh.frustumCulled = false; // las instancias se mueven fuera de la esfera original
-    this.mesh.castShadow = false; // sin sombras: el mapa de sombras es estático y no debe repintarse por las nubes
-    this.mesh.receiveShadow = false;
+    this.gen = new MarchingCubes(RES, new THREE.MeshBasicMaterial(), false, false, 30000);
+    this.gen.isolation = ISO;
     for (let i = 0; i < CLOUDS; i++) {
-      this.clouds.push({ x: 0, y: 0, z: 0, speed: 0, age: 0, life: 1, phase: 0, puffs: [] });
+      const uniform = { value: 0 };
+      const mesh = new THREE.Mesh(new THREE.BufferGeometry(), this.makeMaterial(uniform));
+      mesh.castShadow = false; // el mapa de sombras es estático: las nubes no deben obligar a repintarlo
+      mesh.receiveShadow = false;
+      mesh.visible = false;
+      this.group.add(mesh);
+      this.clouds.push({ x: 0, y: 0, z: 0, speed: 0, age: 0, life: 1, phase: 0, size: 1, growth: 0, mesh, uniform });
     }
+  }
+
+  private makeMaterial(uniform: { value: number }): THREE.MeshStandardMaterial {
+    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 1 });
+    mat.emissive = this.emissive; // compartido: se actualiza una vez por paisaje
+    mat.emissiveIntensity = 0.45;
+    // Condensación/disipación de la nube entera: cada triángulo tiene un umbral (núcleo primero, bordes después);
+    // se descartan los triángulos con umbral por encima del crecimiento, y la malla se encoge un poco al disiparse.
+    mat.onBeforeCompile = (shader) => {
+      shader.uniforms.uGrowth = uniform;
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nattribute float aThreshold;\nvarying float vThreshold;\nuniform float uGrowth;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvThreshold = aThreshold;\ntransformed *= 0.6 + 0.4 * uGrowth;');
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nvarying float vThreshold;\nuniform float uGrowth;')
+        .replace('void main() {', 'void main() {\n  if (vThreshold > uGrowth) discard;');
+    };
+    return mat;
   }
 
   /** Regenera el cielo de un paisaje: misma semilla, mismas nubes iniciales. */
@@ -78,7 +96,7 @@ export class Clouds {
     // Mismos tonos que el cielo del nivel: blanco teñido arriba, algo más oscuro y frío abajo.
     this.top.copy(sky).lerp(new THREE.Color(0xffffff), 0.8);
     this.under.copy(sky).lerp(new THREE.Color(0xffffff), 0.55).multiplyScalar(0.92);
-    this.material.emissive.copy(sky).lerp(new THREE.Color(0xffffff), 0.6);
+    this.emissive.copy(sky).lerp(new THREE.Color(0xffffff), 0.6);
 
     for (let i = 0; i < CLOUDS; i++) this.spawn(i, true);
     this.update(0);
@@ -94,65 +112,115 @@ export class Clouds {
     c.life = 45 + rngNext(r) * 45;
     c.age = randomAge ? rngNext(r) * c.life : 0;
     c.phase = rngNext(r) * Math.PI * 2;
+    c.size = 7 + rngNext(r) * 6;
+    c.mesh.rotation.y = rngNext(r) * Math.PI * 2;
+    c.mesh.geometry.dispose();
+    c.mesh.geometry = this.buildGeometry(c.size);
+  }
 
-    const radius = 4 + rngNext(r) * 5;
-    const n = 6 + Math.floor(rngNext(r) * (MAX_PUFFS - 5));
-    c.puffs = [];
-    for (let p = 0; p < MAX_PUFFS; p++) {
-      if (p >= n) {
-        c.puffs.push({ ox: 0, oy: 0, oz: 0, r: 0, delay: 0, phase: 0, rot: 0 });
-        continue;
-      }
+  /** Metaballs agrupadas en un cúmulo aplanado → marching cubes → geometría plana con base recta. */
+  private buildGeometry(size: number): THREE.BufferGeometry {
+    const r = this.rng;
+    const g = this.gen;
+    g.reset();
+    // Núcleo grande y alto: garantiza una malla y da el cuerpo del cúmulo.
+    g.addBall(0.5, 0.56, 0.5, (ISO + SUB) * 0.17 * 0.17, SUB);
+    // Cúpula: cuanto más cerca del centro, más alta y más gruesa la bola; los bordes bajan y se afinan.
+    const balls = 7 + Math.floor(rngNext(r) * 5);
+    const DMAX = 0.2;
+    for (let k = 0; k < balls; k++) {
       const a = rngNext(r) * Math.PI * 2;
-      const d = Math.sqrt(rngNext(r)) * radius;
-      const oy = rngNext(r) * radius * 0.35;
-      c.puffs.push({
-        ox: Math.cos(a) * d,
-        oy,
-        oz: Math.sin(a) * d,
-        r: radius * (0.35 + rngNext(r) * 0.3) * (1 - 0.5 * (d / radius)), // más grandes hacia el centro
-        delay: rngNext(r) * 0.5,
-        phase: rngNext(r) * Math.PI * 2,
-        rot: rngNext(r) * Math.PI * 2,
-      });
-      const shade = Math.min(1, oy / (radius * 0.35));
-      this.mesh.setColorAt(index * MAX_PUFFS + p, new THREE.Color().copy(this.under).lerp(this.top, shade));
+      const d = Math.sqrt(rngNext(r)) * DMAX;
+      const centrality = 1 - d / DMAX;
+      const R = (0.08 + rngNext(r) * 0.06) * (0.65 + 0.35 * centrality);
+      g.addBall(
+        0.5 + Math.cos(a) * d * 1.35, // algo alargado en horizontal
+        0.5 + 0.02 + centrality * 0.15 * (0.4 + 0.6 * rngNext(r)),
+        0.5 + Math.sin(a) * d,
+        (ISO + SUB) * R * R,
+        SUB,
+      );
     }
-    if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+    g.update();
+
+    const triangles = Math.floor(g.count / 3);
+    const pos = new Float32Array(triangles * 9);
+    const col = new Float32Array(triangles * 9);
+    const thr = new Float32Array(triangles * 3);
+    const src = g.positionArray;
+    const tmp = new THREE.Color();
+    const sx = size;
+    const sy = size * 0.8; // algo más ancho que alto, pero con cuerpo
+    let o = 0;
+
+    for (let t = 0; t < triangles; t++) {
+      const p: number[] = [];
+      for (let v = 0; v < 3; v++) {
+        const i = (t * 3 + v) * 3;
+        p.push(src[i]!, Math.max(src[i + 1]!, BASE), src[i + 2]!); // base plana
+      }
+      const cx = (p[0]! + p[3]! + p[6]!) / 3;
+      const cy = (p[1]! + p[4]! + p[7]!) / 3;
+      const cz = (p[2]! + p[5]! + p[8]!) / 3;
+
+      // Orientación hacia fuera, medida contra el centro de la nube (no contra la normal del campo).
+      const e1 = [p[3]! - p[0]!, p[4]! - p[1]!, p[5]! - p[2]!];
+      const e2 = [p[6]! - p[0]!, p[7]! - p[1]!, p[8]! - p[2]!];
+      const nx = e1[1]! * e2[2]! - e1[2]! * e2[1]!;
+      const ny = e1[2]! * e2[0]! - e1[0]! * e2[2]!;
+      const nz = e1[0]! * e2[1]! - e1[1]! * e2[0]!;
+      if (nx * cx + ny * cy + nz * cz < 0) {
+        for (let k = 0; k < 3; k++) {
+          const tmpV = p[3 + k]!;
+          p[3 + k] = p[6 + k]!;
+          p[6 + k] = tmpV;
+        }
+      }
+
+      // Núcleo primero, bordes después (más algo de ruido por triángulo).
+      const threshold = 0.75 * Math.min(1, Math.hypot(cx, cy * 1.6, cz) / 0.75) + 0.25 * rngNext(r);
+      for (let v = 0; v < 3; v++) {
+        const base = v * 3;
+        pos[o] = p[base]! * sx;
+        pos[o + 1] = p[base + 1]! * sy;
+        pos[o + 2] = p[base + 2]! * sx;
+        tmp.copy(this.under).lerp(this.top, Math.min(1, Math.max(0, (p[base + 1]! - BASE) / 0.45)));
+        col[o] = tmp.r;
+        col[o + 1] = tmp.g;
+        col[o + 2] = tmp.b;
+        thr[t * 3 + v] = threshold;
+        o += 3;
+      }
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    geo.setAttribute('aThreshold', new THREE.BufferAttribute(thr, 1));
+    geo.computeVertexNormals(); // requerido por el material; con flatShading el sombreado sale de las derivadas
+    geo.computeBoundingSphere();
+    return geo;
   }
 
   update(dt: number): void {
     this.time += dt;
     const gust = 1 + 0.25 * Math.sin(this.time * 0.05); // el viento sopla algo más o menos con el tiempo
-    const d = this.dummy;
     let coverage = 0;
 
-    for (let ci = 0; ci < CLOUDS; ci++) {
-      const c = this.clouds[ci]!;
+    for (let i = 0; i < CLOUDS; i++) {
+      const c = this.clouds[i]!;
       c.age += dt;
-      if (c.age >= c.life) this.spawn(ci, false); // se disipó del todo: nace otra en otro sitio
+      if (c.age >= c.life) this.spawn(i, false); // se disipó del todo: nace otra en otro sitio
       c.x += this.windX * c.speed * gust * dt;
       c.z += this.windZ * c.speed * gust * dt;
 
       const t = c.age / c.life;
-      const growth = smooth(0, 0.3, t) * (1 - smooth(0.7, 1, t)); // acumula, mantiene, disipa
-      const bob = Math.sin(this.time * 0.2 + c.phase) * 0.4;
-      const spread = 0.6 + 0.4 * growth; // la nube se expande al crecer
-
-      for (let p = 0; p < MAX_PUFFS; p++) {
-        const puff = c.puffs[p]!;
-        // Las bocanadas aparecen una a una al crecer y se van en orden inverso al disiparse.
-        const s = smooth(puff.delay, puff.delay + 0.5, growth);
-        const r = puff.r * s * (1 + 0.05 * Math.sin(this.time * 0.6 + puff.phase));
-        d.position.set(c.x + puff.ox * spread, c.y + bob + puff.oy * spread, c.z + puff.oz * spread);
-        d.rotation.set(0, puff.rot, 0);
-        d.scale.set(r, r * 0.7, r); // achatadas: base plana de nube
-        d.updateMatrix();
-        this.mesh.setMatrixAt(ci * MAX_PUFFS + p, d.matrix);
-        coverage += r;
-      }
+      c.growth = smooth(0, 0.3, t) * (1 - smooth(0.7, 1, t)); // condensa, mantiene, disipa
+      c.uniform.value = c.growth;
+      c.mesh.visible = c.growth > 0.001;
+      c.mesh.position.set(c.x, c.y + Math.sin(this.time * 0.2 + c.phase) * 0.4, c.z);
+      coverage += c.growth * c.size;
     }
-    this.mesh.instanceMatrix.needsUpdate = true;
     this.coverage = coverage;
   }
 }

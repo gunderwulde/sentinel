@@ -32,6 +32,7 @@ export class Input {
     private readonly getHover: () => HoverInfo,
     private readonly cb: InputCallbacks,
   ) {
+    // Botón derecho (mantener y arrastrar) = mirar. Sin menú contextual del navegador sobre el juego.
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     canvas.addEventListener('mousedown', (e) => {
       if (!this.enabled) return;

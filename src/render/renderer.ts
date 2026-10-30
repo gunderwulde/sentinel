@@ -128,7 +128,7 @@ export class Renderer {
     this.gl.toneMapping = THREE.ACESFilmicToneMapping;
 
     this.scene.add(this.world3d);
-    this.scene.add(this.clouds.mesh);
+    this.scene.add(this.clouds.group);
     this.scene.add(new THREE.HemisphereLight(0xdfeaff, 0x3a4a3a, 1.1));
     this.sun = new THREE.DirectionalLight(0xfff1d6, 2.4);
     this.sun.castShadow = true;
