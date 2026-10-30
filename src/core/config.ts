@@ -10,7 +10,7 @@ export const config = {
   eyeHeight: { synthoid: 1.2, sentinel: 1.6 },
   treesPerLandscape: 14,
   maxTerrainHeight: 8,
-  visibilityStep: 0.2,
+  visibilityStep: 0.1, // 0.2 dejaba pasar rayos rasantes a esquinas de rocas/pedestal (~0.35 % de pares)
   ai: {
     turnStepRad: (10 * Math.PI) / 180, // [V]
     turnIntervalTicks: 30, // [V] a 30 Hz = 1 s por paso

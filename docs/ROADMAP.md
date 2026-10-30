@@ -3,13 +3,13 @@
 Formato de tarea: `T-ID · Rol · Descripción · Depende`. El estado vivo está en [STATUS.md](STATUS.md).
 
 ## M0 — Fundaciones (Lead)
-- T-001 · Lead · Scaffold Vite + TS strict + Vitest + ESLint/Prettier + scripts pnpm
+- T-001 · Lead · Scaffold Vite + TS strict + Vitest + ESLint/Prettier + scripts npm
 - T-002 · Lead · `git init`, `.gitignore`, convención de ramas
 - T-003 · Lead · `core/types.ts`, `core/config`, `core/rng` (PRNG con semilla) · T-001
 - T-004 · Lead · Reglas ESLint de fronteras (`no-restricted-imports`) · T-001
 - T-005 · QA · Fixtures `flatWorld()`/`hillWorld()` · T-003
 - T-006 · Lead · Bus de eventos tipado + bucle de paso fijo (`app`) · T-003
-**Salida M0**: `pnpm dev` muestra pantalla vacía; `pnpm test` verde.
+**Salida M0**: `npm run dev` muestra pantalla vacía; `npm test` verde.
 
 ## M1 — MVP vertical (un paisaje a mano)
 - T-010 · Terreno · Estructura `Landscape` y paisaje de prueba fijo · T-003

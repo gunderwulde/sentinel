@@ -29,6 +29,10 @@ export interface World {
   entities: Map<number, Entity>;
   stacks: Map<TileId, number[]>; // bottom -> top
   nextId: number;
+  /** Se incrementa en cada alta/baja de entidades; sirve para invalidar cachés de la UI. */
+  version: number;
+  /** Altura extra por baldosa (pedestal + rocas apiladas), mantenida por add/removeEntity. */
+  lift: Float32Array;
   sentinelId: number | null;
   player: { synthoidId: number; energy: number };
   status: 'playing' | 'won' | 'lost';

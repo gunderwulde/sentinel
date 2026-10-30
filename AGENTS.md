@@ -59,20 +59,20 @@ Cada agente es **dueño** de sus carpetas. Editar fuera de tu zona requiere pedi
 Formato en STATUS.md:
 ```
 [T-014] Hecho · sim · visibilidad por DDA sobre heightfield
-  Verifica: pnpm test visibility
+  Verifica: npm test visibility
   API: isVisible(world, from, to): boolean  (core/visibility)
   Notas: tolerancia ε en config.visibility.epsilon
 ```
 
 ## 6. Definition of Done
-- [ ] `pnpm typecheck` sin errores (strict, sin `any` salvo justificado con comentario).
-- [ ] `pnpm lint` limpio.
-- [ ] `pnpm test` verde; tests nuevos para lógica nueva.
+- [ ] `npm run typecheck` sin errores (strict, sin `any` salvo justificado con comentario).
+- [ ] `npm run lint` limpio (pendiente: ESLint aún no está configurado, T-004).
+- [ ] `npm test` verde; tests nuevos para lógica nueva.
 - [ ] Sin imports que violen las fronteras (regla de ESLint `no-restricted-imports`).
 - [ ] Docs actualizados si cambió contrato o regla.
 - [ ] Revisión adversarial Carmack + Abrash hecha (regla 9) y objeciones resueltas o anotadas.
 - [ ] STATUS.md actualizado.
-- [ ] Para render/UI: captura o descripción visual verificada en `pnpm dev`.
+- [ ] Para render/UI: captura o descripción visual verificada en `npm run dev`.
 
 ## 7. Orquestación recomendada
 Orden por dependencias (los marcados ∥ pueden ir en paralelo):
@@ -91,13 +91,12 @@ Paralelismo seguro: agentes en worktrees/ramas separadas; integrar vía Lead con
 
 ## 9. Comandos
 ```
-pnpm install
-pnpm dev          # Vite
-pnpm build
-pnpm typecheck
-pnpm lint
-pnpm test         # Vitest
-pnpm test:sim     # propiedades de simulación y solubilidad de semillas
+npm install
+npm run dev          # Vite
+npm run build
+npm run typecheck
+npm run lint
+npm test         # Vitest (incluye propiedades de simulación y barrido de paisajes)
 ```
 
 ## 10. Qué NO hacer

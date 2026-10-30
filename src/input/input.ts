@@ -50,11 +50,16 @@ export class Input {
     addEventListener('keydown', (e) => {
       if (e.repeat) return;
       if (e.code === 'Escape' && this.enabled) return this.cb.pause();
-      if (!this.enabled) return;
+      if (!this.enabled || e.ctrlKey || e.metaKey || e.altKey) return; // no robar Ctrl+R, Ctrl+N...
       this.keys.add(e.code);
       this.onKey(e.code);
     });
     addEventListener('keyup', (e) => this.keys.delete(e.code));
+    // Al perder el foco no llegan los keyup/mouseup: sin esto la cámara seguiría girando sola.
+    addEventListener('blur', () => {
+      this.keys.clear();
+      this.looking = false;
+    });
   }
 
   private look(dyaw: number, dpitch: number): void {

@@ -6,7 +6,6 @@ export const TILES = SIZE - 1; // baldosas por lado
 export const tileId = (x: number, z: number): TileId => z * TILES + x;
 export const tileX = (t: TileId): number => t % TILES;
 export const tileZ = (t: TileId): number => Math.floor(t / TILES);
-export const inGrid = (x: number, z: number): boolean => x >= 0 && z >= 0 && x < TILES && z < TILES;
 
 export function vh(l: Landscape, i: number, j: number): number {
   return l.heights[j * SIZE + i]!;

@@ -1,24 +1,29 @@
 import { config } from './config';
 import { TILES, tileId, vh } from './grid';
-import { boulderCount, pedestalOf } from './world';
 import type { TileId, Vec3, World } from './types';
 
 const EPS = 0.02;
 
-/** Altura de la superficie en (x,z): interpolación bilineal + objetos apilados de la baldosa. */
+/**
+ * Altura de la superficie en (x,z) + objetos apilados de la baldosa.
+ * Usa la MISMA triangulación que la malla del render (diagonal (x,z+1)-(x+1,z)), para que lo que se ve
+ * en pantalla y lo que dicta la regla de visión coincidan.
+ */
 export function surfaceY(w: World, x: number, z: number): number {
   const ix = Math.min(TILES - 1, Math.max(0, Math.floor(x)));
   const iz = Math.min(TILES - 1, Math.max(0, Math.floor(z)));
   const fx = Math.min(1, Math.max(0, x - ix));
   const fz = Math.min(1, Math.max(0, z - iz));
   const l = w.landscape;
+  const h00 = vh(l, ix, iz);
+  const h10 = vh(l, ix + 1, iz);
+  const h01 = vh(l, ix, iz + 1);
+  const h11 = vh(l, ix + 1, iz + 1);
   const h =
-    vh(l, ix, iz) * (1 - fx) * (1 - fz) +
-    vh(l, ix + 1, iz) * fx * (1 - fz) +
-    vh(l, ix, iz + 1) * (1 - fx) * fz +
-    vh(l, ix + 1, iz + 1) * fx * fz;
-  const t = tileId(ix, iz);
-  return h + pedestalOf(w, t) + boulderCount(w, t) * config.boulderHeight;
+    fx + fz <= 1
+      ? h00 + fx * (h10 - h00) + fz * (h01 - h00)
+      : h11 + (1 - fx) * (h01 - h11) + (1 - fz) * (h10 - h11);
+  return h + w.lift[tileId(ix, iz)]!;
 }
 
 /**

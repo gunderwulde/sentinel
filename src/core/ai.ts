@@ -29,7 +29,8 @@ export function aiStep(w: World, events: GameEvent[]): void {
   const eye = eyePos(w, s);
   let target: Entity | undefined;
   for (const e of w.entities.values()) {
-    if (e.kind === 'sentinel' || topId(w, e.tile) !== e.id) continue;
+    // Los árboles se ignoran hasta que existan los meanies (RULES §6.2.3): absorberlos sería ruido sin efecto.
+    if (e.kind === 'sentinel' || e.kind === 'tree' || topId(w, e.tile) !== e.id) continue;
     const dx = tileX(e.tile) + 0.5 - eye.x;
     const dz = tileZ(e.tile) + 0.5 - eye.z;
     if (Math.abs(wrap(Math.atan2(dx, dz) - s.yaw)) > config.ai.coneHalfRad) continue;
@@ -56,7 +57,7 @@ export function aiStep(w: World, events: GameEvent[]): void {
     if (w.player.energy >= 1) {
       w.player.energy -= 1;
       events.push({ t: 'drained', amount: 1 });
-      spawnTrees(w, 1, events);
+      w.player.energy += 1 - spawnTrees(w, 1, events); // sin sitio libre, la energía no se pierde
     } else {
       w.status = 'lost';
       events.push({ t: 'lost', reason: 'absorbed' });
@@ -64,7 +65,8 @@ export function aiStep(w: World, events: GameEvent[]): void {
   } else {
     removeEntity(w, target.id);
     events.push({ t: 'enemyAbsorbed', kind: target.kind });
-    spawnTrees(w, config.energy[target.kind], events);
+    const value = config.energy[target.kind];
+    w.player.energy += value - spawnTrees(w, value, events);
     w.ai.targetId = null;
     w.ai.count = 0;
   }

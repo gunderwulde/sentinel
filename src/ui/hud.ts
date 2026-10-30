@@ -1,5 +1,4 @@
 import type { GameEvent, RuleError, World } from '../core';
-import { config } from '../core';
 
 const ERRORS: Record<RuleError, string> = {
   NotVisible: 'No lo ves desde aquí',
@@ -36,6 +35,8 @@ export class Hud {
   private readonly msg: HTMLElement;
   private readonly end: HTMLElement;
   private readonly alert: HTMLElement;
+  private lastEnergy = '';
+  private lastHover = '';
   private msgTimer = 0;
   private alertTimer = 0;
 
@@ -65,9 +66,17 @@ export class Hud {
   }
 
   update(w: World, hoverHtml: string): void {
-    this.energy.innerHTML = `⚡ ${w.player.energy}<small>Paisaje ${String(w.landscape.code).padStart(4, '0')}</small>`;
-    this.hover.style.display = hoverHtml ? 'block' : 'none';
-    this.hover.innerHTML = hoverHtml;
+    // Solo se toca el DOM si el contenido cambia (los paneles llevan backdrop-filter: recomponer cuesta).
+    const energyHtml = `⚡ ${w.player.energy}<small>Paisaje ${String(w.landscape.code).padStart(4, '0')}</small>`;
+    if (energyHtml !== this.lastEnergy) {
+      this.lastEnergy = energyHtml;
+      this.energy.innerHTML = energyHtml;
+    }
+    if (hoverHtml !== this.lastHover) {
+      this.lastHover = hoverHtml;
+      this.hover.style.display = hoverHtml ? 'block' : 'none';
+      this.hover.innerHTML = hoverHtml;
+    }
     if (w.status === 'won') {
       this.end.style.display = 'flex';
       this.end.innerHTML = '¡Hiperespacio!<small>Pulsa N para el siguiente paisaje o R para repetir</small>';
@@ -135,9 +144,5 @@ export class Hud {
     return err
       ? `<span class="bad">${label} — ${errorText(err)}</span>`
       : `<span class="ok">${label}${extra ? ' ' + extra : ''}</span>`;
-  }
-
-  static get energyOf(): typeof config.energy {
-    return config.energy;
   }
 }

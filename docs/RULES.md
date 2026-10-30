@@ -15,8 +15,9 @@
 
 - Absorber objeto → `+valor` a la energía del jugador.
 - Crear objeto → `−valor` (requiere energía suficiente: `energía ≥ valor`).
-- Energía inicial del jugador: **[V]** 10 unidades totales entre synthoid y objetos iniciales (config `player.startEnergy`).
-- Energía `< 0` o ausencia de synthoid válido → derrota.
+- Energía inicial del jugador: **[V]** 10 unidades **libres** (`config.startEnergy`); además hay en el mundo el synthoid (3), el Centinela (4) y los árboles (14): 31 en total.
+- Derrota: el Centinela ve tu casilla cuando tu energía es 0 (te absorbe), o no queda synthoid válido.
+- La energía se conserva (absorber/crear/drenar convierten energía en objetos y viceversa) **salvo el hiperespacio, que es un sumidero deliberado de `hyperspaceCost`**. Si al reponer un árbol no hay baldosa libre, la energía vuelve al jugador.
 
 ## 2. Terreno y colocación
 - Baldosa = 4 vértices; **plana** si los 4 tienen igual altura.
@@ -95,3 +96,16 @@ La UI traduce cada error a un mensaje i18n y un sonido discreto.
 
 ## 10. Incertidumbres explícitas
 Todo lo marcado **[V]**. Política: valor por defecto en config + test + entrada en DECISIONS.
+
+## 11. Estado de implementación (v0.1)
+Lo que **NO** está implementado todavía aunque aparezca arriba (para no suponerlo):
+- Vigías (`sentries`), meanies, conversión de árbol en meanie y hiperespacio forzado (§6.2.3, 6.4, 6.5). Mientras no existan meanies, **el Centinela ignora los árboles**.
+- Progresión entre paisajes por energía sobrante (§5): hoy el siguiente paisaje es simplemente `código + 1`.
+- Validador de solubilidad (§7.3) y `tools/validate-seeds`. Sí se cumple §7.4 (el inicio no es visible desde el Centinela; lo garantiza `createWorld` y lo comprueba un test sobre una muestra de 345 códigos).
+
+Diferencias de nombres/valores respecto a lo descrito arriba:
+- Config real: `config.ai.turnStepRad` (no `turnStepDeg`), `config.ai.actCount` (pasos consecutivos viendo al objetivo antes de actuar, en lugar de `drainDelayTicks`), `config.startEnergy`.
+- Absorber exige ver el **punto de apoyo del objeto** en su altura dentro de la pila (no la baldosa base).
+- El hiperespacio solo va a baldosas libres, planas y de altura **menor o igual**; si no hay, falla con `InvalidTile`.
+- Existe el `RuleError` `GameOver` (se devuelve cualquier orden cuando la partida ya terminó).
+- La superficie de visibilidad usa la **misma triangulación que el render** (no bilineal) y un paso de muestreo de 0.1.

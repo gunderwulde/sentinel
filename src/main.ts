@@ -11,7 +11,7 @@ import {
   tileX,
   tileZ,
 } from './core';
-import type { Command, CreatableKind, GameEvent, World } from './core';
+import type { Command, CreatableKind, GameEvent, RuleError, World } from './core';
 import { Input } from './input/input';
 import type { HoverInfo, ViewState } from './input/input';
 import { Renderer } from './render/renderer';
@@ -33,6 +33,8 @@ function load(newCode: number): void {
   code = (newCode + 10000) % 10000;
   history.replaceState(null, '', `?code=${code}`);
   world = createWorld(code);
+  hover = {}; // los ids se reinician en cada mundo: un hover viejo apuntaría a otra entidad
+  hoverKey = '';
   renderer.setWorld(world);
   const me = playerEntity(world)!;
   const s = world.entities.get(world.sentinelId!)!;
@@ -87,39 +89,71 @@ const menu = new Menu(
   code,
 );
 
-function hoverHtml(): string {
+// Esc también reanuda desde la pausa (el Input está desactivado mientras hay menú).
+addEventListener('keydown', (e) => {
+  if (e.code === 'Escape' && !e.repeat && menu.isPause) {
+    menu.close();
+    setPlaying(true);
+  }
+});
+
+const KINDS: [CreatableKind, string, string][] = [
+  ['tree', '1', 'Árbol'],
+  ['boulder', '2', 'Roca'],
+  ['synthoid', '3', 'Robot'],
+];
+const NAMES = { tree: 'árbol', boulder: 'roca', synthoid: 'robot', sentinel: 'Centinela' };
+
+interface HoverView {
+  html: string;
+  tile: number | null;
+  y: number;
+  ok: boolean;
+}
+
+// La visibilidad cuesta ~25–60 µs por comprobación y el resultado solo cambia si cambia el objetivo apuntado,
+// el mundo (version) o la energía/robot del jugador: se cachea por esa clave.
+let hoverKey = '';
+let hoverView: HoverView = { html: '', tile: null, y: 0, ok: false };
+
+function analyzeHover(): HoverView {
+  const key = `${hover.entityId ?? ''}|${hover.tile ?? ''}|${world.version}|${world.player.energy}|${world.player.synthoidId}|${world.status}`;
+  if (key === hoverKey) return hoverView;
+  hoverKey = key;
+
   const parts: string[] = [];
-  const kinds: [CreatableKind, string, string][] = [
-    ['tree', '1', 'Árbol'],
-    ['boulder', '2', 'Roca'],
-    ['synthoid', '3', 'Robot'],
-  ];
+  let tile: number | null = null;
+  let ok = false;
+  const line = (label: string, err: RuleError | undefined): void => {
+    parts.push(Hud.previewLine(label, err, ''));
+  };
   if (hover.entityId !== undefined) {
     const e = world.entities.get(hover.entityId);
     if (e) {
-      const names = { tree: 'árbol', boulder: 'roca', synthoid: 'robot', sentinel: 'Centinela' };
+      tile = e.tile;
       const abs = checkAbsorb(world, e.id);
-      parts.push(Hud.previewLine(`Clic: absorber ${names[e.kind]} (+${config.energy[e.kind]})`, abs, ''));
-      if (e.kind === 'synthoid') parts.push(Hud.previewLine('T: transferir', checkTransfer(world, e.id), ''));
+      ok = abs === undefined;
+      line(`Clic: absorber ${NAMES[e.kind]} (+${config.energy[e.kind]})`, abs);
+      if (e.kind === 'synthoid') line('T: transferir', checkTransfer(world, e.id));
       if (e.kind === 'boulder')
-        for (const [k, key, name] of kinds) parts.push(Hud.previewLine(`${key}: ${name} encima (−${config.energy[k]})`, checkCreate(world, k, e.tile), ''));
+        for (const [k, kk, name] of KINDS) line(`${kk}: ${name} encima (−${config.energy[k]})`, checkCreate(world, k, e.tile));
     }
   } else if (hover.tile !== undefined) {
-    for (const [k, key, name] of kinds)
-      parts.push(Hud.previewLine(`${key}: ${name} (−${config.energy[k]})`, checkCreate(world, k, hover.tile), ''));
+    tile = hover.tile;
+    for (const [k, kk, name] of KINDS) {
+      const err = checkCreate(world, k, hover.tile);
+      if (err === undefined) ok = true;
+      line(`${kk}: ${name} (−${config.energy[k]})`, err);
+    }
   }
-  return parts.join('<br>');
-}
-
-function updateHover(): void {
-  hover = renderer.pick(input.pointer.x, input.pointer.y);
-  const t = hover.tile ?? (hover.entityId !== undefined ? world.entities.get(hover.entityId)?.tile : undefined);
-  if (t === undefined || world.status !== 'playing') {
-    renderer.setHover(null, 0, false);
-    return;
-  }
-  const ok = hover.entityId !== undefined ? checkAbsorb(world, hover.entityId) === undefined : checkCreate(world, 'tree', t) === undefined || checkCreate(world, 'boulder', t) === undefined;
-  renderer.setHover(t, tileTopY(world, t), ok);
+  if (world.status !== 'playing') tile = null;
+  hoverView = {
+    html: world.status === 'playing' ? parts.join('<br>') : '',
+    tile,
+    y: tile === null ? 0 : tileTopY(world, tile),
+    ok,
+  };
+  return hoverView;
 }
 
 load(code);
@@ -143,14 +177,18 @@ function frame(now: number): void {
     input.update(elapsed / 1000);
   } else {
     acc = 0;
-    view.yaw += (elapsed / 1000) * 0.06; // giro lento de fondo bajo el menú
   }
   const overview = !playing && menu.overview;
-  if (overview) view.pitch = -0.3;
+  if (overview) {
+    view.yaw += (elapsed / 1000) * 0.06; // giro lento desde el centro del nivel (solo menú principal)
+    view.pitch = -0.3;
+  }
   renderer.sync(world, view, overview);
   if (playing) {
-    updateHover();
-    hud.update(world, world.status === 'playing' ? hoverHtml() : '');
+    hover = renderer.pick(input.pointer.x, input.pointer.y);
+    const hv = analyzeHover();
+    renderer.setHover(hv.tile, hv.y, hv.ok);
+    hud.update(world, hv.html);
   }
   renderer.draw();
   requestAnimationFrame(frame);

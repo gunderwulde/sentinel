@@ -1,7 +1,7 @@
 # DECISIONS
 
 ## Aceptadas
-- **A-001** Stack: TypeScript strict + three.js + Vite + Vitest. pnpm como gestor.
+- **A-001** Stack: TypeScript strict + three.js + Vite + Vitest. npm como gestor (pnpm no está instalado en el entorno).
 - **A-002** Fidelidad: remake fiel + mejoras de calidad de vida.
 - **A-003** Plataforma: web de escritorio, ratón + teclado.
 - **A-004** Estilo visual: moderno estilizado (low-poly, toon/flat, sombras, post-proceso opcional).

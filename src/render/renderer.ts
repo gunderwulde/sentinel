@@ -83,19 +83,28 @@ void main() {
   vec2 coord = vec2(u, v);
   vec2 g = abs(fract(coord - 0.5) - 0.5) / max(fwidth(coord), vec2(0.0001));
   float line = 1.0 - min(min(g.x, g.y), 1.0);
+  // Lejos o en ángulo rasante la rejilla se funde en lugar de saturarse en moiré.
+  vec2 fw = fwidth(coord);
+  line *= 1.0 - smoothstep(0.5, 1.0, max(fw.x, fw.y));
   float band = 1.0 - abs(fract(v * 0.06 - uTime * 0.12) - 0.5) * 7.0;
   band = clamp(band, 0.0, 1.0);
-  float fade = smoothstep(16.0, -2.0, v) * 0.55 + 0.12;
-  float near = smoothstep(9.0, 0.4, distance(uCam, vWorld));
+  float fade = (1.0 - smoothstep(-2.0, 16.0, v)) * 0.55 + 0.12;
+  float near = 1.0 - smoothstep(0.4, 9.0, distance(uCam, vWorld));
   float flicker = 0.88 + 0.12 * sin(uTime * 3.0 + u * 0.8);
   float a = (line * 0.5 + band * 0.3 + 0.07) * fade * flicker + near * (line * 0.6 + 0.18);
   gl_FragColor = vec4(uColor * (1.0 + near * 0.8), clamp(a, 0.0, 0.9));
+  #include <colorspace_fragment>
 }`;
 
 export class Renderer {
   private readonly gl: THREE.WebGLRenderer;
   private wallMaterial: THREE.ShaderMaterial | null = null;
   private overviewY = 10;
+  private readonly assets = new Map<string, { geo: THREE.BufferGeometry; mat: THREE.Material }>();
+  private shadowsDirty = true;
+  private lastOverview = false;
+  private readonly ndc = new THREE.Vector2();
+  private readonly pickTargets: THREE.Object3D[] = [];
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.PerspectiveCamera(70, 1, 0.05, 200);
   private readonly raycaster = new THREE.Raycaster();
@@ -113,6 +122,7 @@ export class Renderer {
     this.gl.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.gl.shadowMap.enabled = true;
     this.gl.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.gl.shadowMap.autoUpdate = false;
     this.gl.toneMapping = THREE.ACESFilmicToneMapping;
 
     this.scene.add(this.world3d);
@@ -154,6 +164,7 @@ export class Renderer {
   setWorld(w: World): void {
     for (const m of this.meshes.values()) this.world3d.remove(m);
     this.meshes.clear();
+    this.shadowsDirty = true;
     if (this.terrain) {
       this.world3d.remove(this.terrain);
       this.terrain.traverse((o) => {
@@ -216,7 +227,7 @@ export class Renderer {
       transparent: true,
       depthWrite: false,
       side: THREE.DoubleSide,
-      blending: THREE.AdditiveBlending,
+      blending: THREE.NormalBlending, // el aditivo se quemaba a blanco sobre el cielo claro
       uniforms: {
         uTime: { value: 0 },
         uCam: { value: new THREE.Vector3() },
@@ -263,15 +274,22 @@ export class Renderer {
     g.computeVertexNormals();
     const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true }));
     m.receiveShadow = true;
-    m.castShadow = true;
+    m.castShadow = inner; // el anillo exterior queda casi todo fuera del frustum de sombras
     return m;
   }
 
   private makeMesh(e: Entity): THREE.Group {
     const g = new THREE.Group();
     g.userData.entityId = e.id;
-    const add = (geo: THREE.BufferGeometry, color: number, y: number, emissive = 0): THREE.Mesh => {
-      const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color, flatShading: true, emissive }));
+    // Geometrías y materiales compartidos por tipo (se crean una vez; nunca se liberan por entidad).
+    const add = (make: () => THREE.BufferGeometry, color: number, y: number, emissive = 0): THREE.Mesh => {
+      const key = `${e.kind}:${g.children.length}`;
+      let a = this.assets.get(key);
+      if (!a) {
+        a = { geo: make(), mat: new THREE.MeshStandardMaterial({ color, flatShading: true, emissive }) };
+        this.assets.set(key, a);
+      }
+      const m = new THREE.Mesh(a.geo, a.mat);
       m.position.y = y;
       m.castShadow = true;
       m.receiveShadow = true;
@@ -280,23 +298,23 @@ export class Renderer {
     };
     switch (e.kind) {
       case 'tree':
-        add(new THREE.CylinderGeometry(0.07, 0.1, 0.4, 6), COLORS.trunk, 0.2);
-        add(new THREE.ConeGeometry(0.34, 0.9, 7), COLORS.tree, 0.8);
+        add(() => new THREE.CylinderGeometry(0.07, 0.1, 0.4, 6), COLORS.trunk, 0.2);
+        add(() => new THREE.ConeGeometry(0.34, 0.9, 7), COLORS.tree, 0.8);
         break;
       case 'boulder':
-        add(new THREE.BoxGeometry(0.9, 1, 0.9), COLORS.boulder, 0.5);
+        add(() => new THREE.BoxGeometry(0.9, 1, 0.9), COLORS.boulder, 0.5);
         break;
       case 'synthoid': {
-        add(new THREE.CylinderGeometry(0.26, 0.32, 0.7, 8), COLORS.synthoid, 0.35, 0x063a40);
-        add(new THREE.SphereGeometry(0.24, 10, 8), COLORS.synthoid, 0.92, 0x063a40);
-        const visor = add(new THREE.BoxGeometry(0.28, 0.08, 0.1), 0x0b1d22, 0.95);
+        add(() => new THREE.CylinderGeometry(0.26, 0.32, 0.7, 8), COLORS.synthoid, 0.35, 0x063a40);
+        add(() => new THREE.SphereGeometry(0.24, 10, 8), COLORS.synthoid, 0.92, 0x063a40);
+        const visor = add(() => new THREE.BoxGeometry(0.28, 0.08, 0.1), 0x0b1d22, 0.95);
         visor.position.z = 0.2;
         break;
       }
       case 'sentinel': {
-        add(new THREE.CylinderGeometry(0.18, 0.32, 1.0, 8), COLORS.sentinel, 0.5, 0x3a0d0a);
-        add(new THREE.SphereGeometry(0.32, 12, 10), COLORS.sentinel, 1.35, 0x3a0d0a);
-        const eye = add(new THREE.SphereGeometry(0.12, 8, 6), 0xffffff, 1.4, 0xffffff);
+        add(() => new THREE.CylinderGeometry(0.18, 0.32, 1.0, 8), COLORS.sentinel, 0.5, 0x3a0d0a);
+        add(() => new THREE.SphereGeometry(0.32, 12, 10), COLORS.sentinel, 1.35, 0x3a0d0a);
+        const eye = add(() => new THREE.SphereGeometry(0.12, 8, 6), 0xffffff, 1.4, 0xffffff);
         eye.position.z = 0.28;
         break;
       }
@@ -314,28 +332,30 @@ export class Renderer {
         m = this.makeMesh(e);
         this.meshes.set(e.id, m);
         this.world3d.add(m);
+        this.shadowsDirty = true;
       }
       m.position.set(tileX(e.tile) + 0.5, footY(w, e), tileZ(e.tile) + 0.5);
       m.rotation.y = e.yaw;
     }
     for (const [id, m] of this.meshes) {
       if (!seen.has(id)) {
-        this.world3d.remove(m);
-        m.traverse((o) => {
-          if (o instanceof THREE.Mesh) {
-            o.geometry.dispose();
-            (o.material as THREE.Material).dispose();
-          }
-        });
+        this.world3d.remove(m); // geometría y material son compartidos: no se liberan
         this.meshes.delete(id);
+        this.shadowsDirty = true;
       }
     }
 
     const me = playerEntity(w);
-    this.ownId = me ? me.id : -1;
-    const own = this.meshes.get(this.ownId);
+    const ownId = me ? me.id : -1;
+    if (ownId !== this.ownId || overview !== this.lastOverview) this.shadowsDirty = true; // cambia qué malla se oculta
+    this.ownId = ownId;
+    this.lastOverview = overview;
     for (const [id, m] of this.meshes) m.visible = overview || id !== this.ownId;
-    if (own && !overview) own.visible = false;
+
+    if (this.shadowsDirty) {
+      this.gl.shadowMap.needsUpdate = true; // el sol es fijo: el mapa de sombras solo se repinta si cambia la escena
+      this.shadowsDirty = false;
+    }
 
     const p = overview ? { x: TILES / 2, y: this.overviewY, z: TILES / 2 } : me ? eyePos(w, me) : null;
     if (p) {
@@ -355,8 +375,10 @@ export class Renderer {
 
   pick(ndcX: number, ndcY: number): Pick {
     if (!this.terrainMesh || !this.pedestalMesh) return {};
-    this.raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), this.camera);
-    const targets: THREE.Object3D[] = [this.terrainMesh, this.pedestalMesh];
+    this.raycaster.setFromCamera(this.ndc.set(ndcX, ndcY), this.camera);
+    const targets = this.pickTargets;
+    targets.length = 0;
+    targets.push(this.terrainMesh, this.pedestalMesh);
     for (const [id, m] of this.meshes) if (id !== this.ownId) targets.push(m);
     const hit = this.raycaster.intersectObjects(targets, true)[0];
     if (!hit) return {};

@@ -68,17 +68,13 @@ export class Menu {
     document.body.append(this.root);
   }
 
-  get isOpen(): boolean {
-    return this.screen !== 'closed';
-  }
-
   /** El menú principal (y su ayuda) se ven sobre la cámara de presentación; la pausa, sobre la partida. */
   get overview(): boolean {
     return this.screen === 'main' || (this.screen === 'help' && this.from === 'main');
   }
 
-  get current(): Screen {
-    return this.screen;
+  get isPause(): boolean {
+    return this.screen === 'pause';
   }
 
   close(): void {
@@ -135,14 +131,19 @@ export class Menu {
       if (e.key === 'Enter') play();
       e.stopPropagation();
     });
-    input.addEventListener('input', () => {
+    // El campo siempre muestra el código realmente usado (ya acotado a 0–9999).
+    const sync = (): void => {
       this.lastCode = this.readCode();
+      if (input.value !== '') input.value = String(this.lastCode);
       this.cb.preview(this.lastCode);
+    };
+    input.addEventListener('input', sync);
+    input.addEventListener('change', () => {
+      input.value = String(this.readCode());
     });
     this.on('#m-rand', () => {
       input.value = String(Math.floor(Math.random() * 10000));
-      this.lastCode = this.readCode();
-      this.cb.preview(this.lastCode);
+      sync();
     });
     this.on('#m-help', () => this.show('help'));
     this.root.querySelector<HTMLElement>('#m-play')?.focus();

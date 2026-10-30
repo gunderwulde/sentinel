@@ -1,12 +1,7 @@
 import { config } from './config';
-import { baseHeight, isFlat, tileX, tileZ, TILES } from './grid';
+import { TILES, baseHeight, isFlat, tileX, tileZ } from './grid';
 import { next, nextInt, seedFromCode } from './rng';
-import { generateLandscape } from './terrain';
 import type { Entity, GameEvent, Landscape, ObjectKind, TileId, Vec3, World } from './types';
-
-export function createWorld(code: number): World {
-  return createWorldFromLandscape(generateLandscape(code));
-}
 
 export function createWorldFromLandscape(landscape: Landscape): World {
   const w: World = {
@@ -15,12 +10,15 @@ export function createWorldFromLandscape(landscape: Landscape): World {
     entities: new Map(),
     stacks: new Map(),
     nextId: 1,
+    version: 0,
+    lift: new Float32Array(TILES * TILES),
     sentinelId: null,
     player: { synthoidId: 0, energy: config.startEnergy },
     status: 'playing',
     rng: { s: (seedFromCode(landscape.code) ^ 0x5bd1e995) >>> 0 },
     ai: { targetId: null, count: 0 },
   };
+  w.lift[landscape.sentinelTile] = config.pedestalHeight;
   w.sentinelId = addEntity(w, 'sentinel', landscape.sentinelTile, next(w.rng) * Math.PI * 2);
   w.player.synthoidId = addEntity(w, 'synthoid', landscape.startTile, 0);
   for (const t of landscape.trees) addEntity(w, 'tree', t, next(w.rng) * Math.PI * 2);
@@ -30,6 +28,8 @@ export function createWorldFromLandscape(landscape: Landscape): World {
 export function addEntity(w: World, kind: ObjectKind, tile: TileId, yaw: number): number {
   const id = w.nextId++;
   w.entities.set(id, { id, kind, tile, yaw });
+  w.version++;
+  if (kind === 'boulder') w.lift[tile]! += config.boulderHeight;
   const s = w.stacks.get(tile);
   if (s) s.push(id);
   else w.stacks.set(tile, [id]);
@@ -40,6 +40,8 @@ export function removeEntity(w: World, id: number): void {
   const e = w.entities.get(id);
   if (!e) return;
   w.entities.delete(id);
+  w.version++;
+  if (e.kind === 'boulder') w.lift[e.tile]! -= config.boulderHeight;
   const s = w.stacks.get(e.tile);
   if (s) {
     s.splice(s.indexOf(id), 1);
@@ -53,26 +55,15 @@ export function topId(w: World, tile: TileId): number | undefined {
   return s && s.length > 0 ? s[s.length - 1] : undefined;
 }
 
-export function boulderCount(w: World, tile: TileId): number {
-  const s = w.stacks.get(tile);
-  if (!s) return 0;
-  let n = 0;
-  for (const id of s) if (w.entities.get(id)?.kind === 'boulder') n++;
-  return n;
-}
-
-export function pedestalOf(w: World, tile: TileId): number {
-  return tile === w.landscape.sentinelTile ? config.pedestalHeight : 0;
-}
-
 /** Altura sobre la que se apoyaría el siguiente objeto de la baldosa. */
 export function tileTopY(w: World, tile: TileId): number {
-  return baseHeight(w.landscape, tile) + pedestalOf(w, tile) + boulderCount(w, tile) * config.boulderHeight;
+  return baseHeight(w.landscape, tile) + w.lift[tile]!;
 }
 
 export function footY(w: World, e: Entity): number {
   const idx = w.stacks.get(e.tile)?.indexOf(e.id) ?? 0;
-  return baseHeight(w.landscape, e.tile) + pedestalOf(w, e.tile) + idx * config.boulderHeight;
+  const ped = e.tile === w.landscape.sentinelTile ? config.pedestalHeight : 0;
+  return baseHeight(w.landscape, e.tile) + ped + idx * config.boulderHeight;
 }
 
 export function footPoint(w: World, e: Entity): Vec3 {
@@ -99,15 +90,21 @@ export function freeTiles(w: World): TileId[] {
   return out;
 }
 
-/** Devuelve la energía absorbida al paisaje como árboles (conservación de energía). */
-export function spawnTrees(w: World, count: number, events: GameEvent[]): void {
+/**
+ * Devuelve la energía absorbida al paisaje como árboles (conservación de energía).
+ * Devuelve cuántos árboles se colocaron; si no hay sitio, quien llama debe reponer el resto.
+ */
+export function spawnTrees(w: World, count: number, events: GameEvent[]): number {
+  let placed = 0;
   for (let k = 0; k < count; k++) {
     const free = freeTiles(w);
-    if (free.length === 0) return;
+    if (free.length === 0) break;
     const tile = free[nextInt(w.rng, free.length)]!;
     const id = addEntity(w, 'tree', tile, next(w.rng) * Math.PI * 2);
     events.push({ t: 'created', id, kind: 'tree', tile });
+    placed++;
   }
+  return placed;
 }
 
 export function totalEnergy(w: World): number {

@@ -1,5 +1,5 @@
 import { config } from './config';
-import { baseHeight, isFlat, tileX, tileZ } from './grid';
+import { TILES, baseHeight, isFlat, tileX, tileZ } from './grid';
 import { nextInt } from './rng';
 import { canSee } from './visibility';
 import {
@@ -31,7 +31,7 @@ export function checkAbsorb(w: World, id: number): RuleError | undefined {
 export function checkCreate(w: World, kind: CreatableKind, tile: TileId): RuleError | undefined {
   const me = playerEntity(w);
   if (!me) return 'GameOver';
-  if (tile < 0 || tileX(tile) >= 31 || tileZ(tile) >= 31) return 'InvalidTile';
+  if (!Number.isInteger(tile) || tile < 0 || tile >= TILES * TILES) return 'InvalidTile';
   if (!isFlat(w.landscape, tile)) return 'NotFlat';
   const top = topId(w, tile);
   if (top !== undefined && w.entities.get(top)?.kind !== 'boulder') return 'InvalidTile';
@@ -92,9 +92,8 @@ export function apply(w: World, cmd: Command): ApplyResult {
         return { events };
       }
       const here = footY(w, me);
-      const all = freeTiles(w);
-      const lower = all.filter((t) => baseHeight(w.landscape, t) <= here);
-      const pool = lower.length > 0 ? lower : all;
+      // RULES §4: solo a baldosas igual de bajas o más; si no hay sitio, falla.
+      const pool = freeTiles(w).filter((t) => baseHeight(w.landscape, t) <= here);
       if (pool.length === 0) return fail('InvalidTile');
       const tile = pool[nextInt(w.rng, pool.length)]!;
       removeEntity(w, me.id);
