@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sentinel</title>
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; background: #0b0f14; }
+      /* Solo el texto editable (inputs) es seleccionable. */
+      * { -webkit-user-select: none; user-select: none; -webkit-user-drag: none; }
+      input { -webkit-user-select: text; user-select: text; }
+      #game { display: block; width: 100vw; height: 100vh; }
+      #hud { position: fixed; inset: 0; pointer-events: none; font-family: system-ui, sans-serif; color: #f2f5f7; }
+    </style>
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+    <div id="hud"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
