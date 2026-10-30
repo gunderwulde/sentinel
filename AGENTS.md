@@ -42,6 +42,10 @@ Cada agente es **dueño** de sus carpetas. Editar fuera de tu zona requiere pedi
 6. **Cambios pequeños y verificables**: una tarea del ROADMAP = un cambio coherente.
 7. **No inventes reglas**: si RULES.md no lo cubre, pregunta (DECISIONS.md → «Abiertas») y usa el valor por defecto documentado.
 8. **Español en docs/comentarios de dominio, inglés en identificadores**.
+9. **Utiliza el sistema adversarial Carmack + Abrash para diseño, implementación y revisión.**
+   - *Carmack* (lo más simple que sea correcto, determinista y mantenible) y *Abrash* (medir, rendimiento y precisión en el detalle) se enfrentan: quien propone defiende su solución con razones y medidas; el otro intenta romperla (casos límite, coste en tiempo/memoria, complejidad innecesaria).
+   - Se aplica en tres momentos: **diseño** (alternativas y su crítica antes de elegir; registrar en DECISIONS.md si es relevante), **implementación** (escribir primero la versión simple, medir y optimizar solo con datos) y **revisión** (la revisión busca activamente fallos, no confirma).
+   - Una tarea no pasa a `Hecho` hasta que el revisor adversarial no encuentra objeciones sin resolver; las objeciones y su resolución se anotan en la línea de STATUS.md.
 
 ## 5. Flujo de trabajo
 1. Toma una tarea `Pendiente` de [docs/STATUS.md](docs/STATUS.md) cuyo bloqueo esté resuelto; márcala `En curso` con tu rol.
@@ -66,6 +70,7 @@ Formato en STATUS.md:
 - [ ] `pnpm test` verde; tests nuevos para lógica nueva.
 - [ ] Sin imports que violen las fronteras (regla de ESLint `no-restricted-imports`).
 - [ ] Docs actualizados si cambió contrato o regla.
+- [ ] Revisión adversarial Carmack + Abrash hecha (regla 9) y objeciones resueltas o anotadas.
 - [ ] STATUS.md actualizado.
 - [ ] Para render/UI: captura o descripción visual verificada en `pnpm dev`.
 

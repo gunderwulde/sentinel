@@ -250,8 +250,9 @@ export class Renderer {
           else c.setHSL((hue + 0.04) % 1, 0.35, 0.36);
         } else {
           // Exterior más apagado para que se lea como «fuera de juego».
-          if (flat) c.setHSL(hue, 0.28, (x + z) % 2 === 0 ? 0.36 : 0.32);
-          else c.setHSL((hue + 0.04) % 1, 0.22, 0.26);
+          // Casi gris y oscuro: se lee como «no jugable» frente al verde saturado del área de juego.
+          if (flat) c.setHSL(hue, 0.07, (x + z) % 2 === 0 ? 0.22 : 0.2);
+          else c.setHSL(hue, 0.06, 0.15);
         }
         for (let k = 0; k < 6; k++) col.push(c.r, c.g, c.b);
       }
